@@ -1,11 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from supabase import create_client, Client
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
-import os
+import urllib.request
+import json
 
 app = FastAPI()
 
@@ -17,78 +17,85 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- COPY DARI SINI ---
 SUPABASE_URL = "https://dzatrsuzjyehrsynjvvm.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6YXRyc3V6anllaHJzeW5qdnZtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODQ4NjM4MiwiZXhwIjoyMDk0MDYyMzgyfQ.yyaHi8zOeobXgucE1B2JVBM-oxD49s5vFnG5nmdceGs"
 
-try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except Exception as e:
-    print(f"Gagal konek Supabase: {e}")
-    supabase = None
-# --- SAMPAI SINI ---
-try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except:
-    supabase = None
+@app.get("/")
+def read_root():
+    return {"status": "Online", "message": "API Komputasi K-Means Aktif!"}
 
 @app.get("/proses-klaster")
 def proses_data(k: int = 3):
     try:
-        if not supabase:
-            return {"status": "error", "detail": "Koneksi Supabase belum di-set"}
+        # 1. JALUR BYPASS MURNI (Anti-Bug Library Supabase)
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}"
+        }
+        
+        # Fungsi internal buat nembak data langsung ke server
+        def tarik_data(nama_tabel):
+            req = urllib.request.Request(
+                f"{SUPABASE_URL}/rest/v1/{nama_tabel}?select=*",
+                headers=headers
+            )
+            try:
+                with urllib.request.urlopen(req) as response:
+                    return json.loads(response.read().decode()), 200
+            except urllib.error.HTTPError as e:
+                return e.read().decode(), e.code
+            except Exception as e:
+                return str(e), 500
 
-        # 1. Tarik Data Mentah
-        response = supabase.table("kuesioner").select("*").execute()
-        data = response.data
+        # Mesin otomatis nyoba ejaan pertama
+        data, status_code = tarik_data("kuesioner")
         
-        # Mencegah error jika data kosong
-        if not data:
-            return {"status": "error", "detail": "Database Supabase benar-benar kosong atau akses diblokir."}
+        # Kalau gagal (tabel gak ada), mesin otomatis nyoba ejaan kedua
+        if status_code != 200:
+            data, status_code = tarik_data("kuisioner")
             
+        # Kalau masih gagal juga, tampilkan error asli dari server
+        if status_code != 200:
+            return {"status": "error", "detail": f"Gagal narik Supabase. Kode: {status_code}, Pesan: {data}"}
+            
+        if not data:
+            return {"status": "error", "detail": "Data Supabase kosong (0 baris)."}
+            
+        # 2. PRE-PROCESSING DATA
         df = pd.DataFrame(data)
-        
-        # ANTI-BADAI 1: Paksa semua nama kolom jadi HURUF BESAR (P1, P2, dst)
         df.columns = df.columns.str.upper()
-        
-        # 2. Pre-processing & Pembersihan Data
         kolom_p = [f"P{i}" for i in range(1, 21)]
         
-        # Cek apakah kolom P beneran ada
-        kolom_hilang = [col for col in kolom_p if col not in df.columns]
-        if kolom_hilang:
-            return {"status": "error", "detail": f"Gagal menemukan kolom ini di Supabase: {kolom_hilang}"}
+        # Cek ketersediaan kolom (P1 sampai P20)
+        kolom_ada = [col for col in kolom_p if col in df.columns]
+        if len(kolom_ada) < 20:
+            return {"status": "error", "detail": f"Kolom tidak lengkap! Hanya menemukan {len(kolom_ada)} kolom pertanyaan."}
 
-        # ANTI-BADAI 2: Paksa isi kolom P1-P20 jadi angka matematika (jika ada huruf, jadikan NaN)
-        for col in kolom_p:
+        # Paksa jadi angka dan hapus teks nyasar
+        for col in kolom_ada:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # ANTI-BADAI 3: Hapus baris yang punya nilai kosong (NaN), tapi simpan sisa barisnya
-        df_bersih = df.dropna(subset=kolom_p).copy()
+        df_bersih = df.dropna(subset=kolom_ada).copy()
 
-        # Cek apakah setelah dibersihkan datanya masih cukup buat K-Means
         if len(df_bersih) < k:
-            return {"status": "error", "detail": f"Data hancur saat dibersihkan! Dari {len(df)} baris, cuma sisa {len(df_bersih)} yang angkanya valid. Butuh minimal {k} baris."}
+            return {"status": "error", "detail": f"Data hancur saat dibersihkan. Sisa: {len(df_bersih)} baris. Butuh {k} baris."}
 
-        # Mulai Eksekusi Machine Learning
-        df_numeric = df_bersih[kolom_p]
+        # 3. MACHINE LEARNING (PCA & K-MEANS)
+        df_numeric = df_bersih[kolom_ada]
         
         scaler = StandardScaler()
         scaled_data = scaler.fit_transform(df_numeric)
         
-        # 3. PCA (Target Variansi > 72%)
         pca = PCA(n_components=0.72)
         pca_data = pca.fit_transform(scaled_data)
         
-        # 4. K-Means Clustering
         kmeans = KMeans(n_clusters=k, random_state=42)
         clusters = kmeans.fit_predict(pca_data)
 
-        # 5. Ekstraksi Koordinat buat Plotly di Frontend
+        # 4. EXPORT KOORDINAT UNTUK GRAFIK
         pc1 = pca_data[:, 0].tolist()
         pc2 = pca_data[:, 1].tolist() if pca.n_components_ > 1 else [0] * len(pca_data)
         
-        # Tarik nama siswa, kalau gak ada kasih nama "Siswa 1, 2, 3..."
         if 'NAMA' in df_bersih.columns:
             nama_list = df_bersih['NAMA'].tolist()
         else:
@@ -108,5 +115,4 @@ def proses_data(k: int = 3):
         }
 
     except Exception as e:
-        # Menangkap SEMUA jenis error Python biar gak bikin server Crash 500
         return {"status": "error", "detail": f"Error Internal Python: {str(e)}"}
