@@ -17,9 +17,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "URL_SUPABASE_LU")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "KEY_SUPABASE_LU")
+# --- COPY DARI SINI ---
+SUPABASE_URL = "https://dzatrsuzjyehrsynjvvm.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6YXRyc3V6anllaHJzeW5qdnZtIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODQ4NjM4MiwiZXhwIjoyMDk0MDYyMzgyfQ.yyaHi8zOeobXgucE1B2JVBM-oxD49s5vFnG5nmdceGs"
 
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    print(f"Gagal konek Supabase: {e}")
+    supabase = None
+# --- SAMPAI SINI ---
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except:
