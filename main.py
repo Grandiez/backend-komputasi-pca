@@ -36,12 +36,17 @@ def proses_data(k: int = 3):
             return {"status": "error", "detail": "Koneksi Supabase belum di-set"}
 
         # 1. Tarik Data Mentah
+        # 1. Tarik Data Mentah
         response = supabase.table("kuisioner").select("*").execute()
         data = response.data
         
-        if not data or len(data) < k:
-            return {"status": "error", "detail": f"Data kurang! Minimal butuh {k} siswa untuk dibagi {k} klaster."}
+        # Mencegah error NoneType jika data kosong atau diblokir RLS
+        if data is None:
+            data = []
             
+        if len(data) < k:
+            return {"status": "error", "detail": f"Data kosong atau di-blokir RLS! Data terbaca: {len(data)} siswa. Butuh minimal {k} siswa."}    
+       
         df = pd.DataFrame(data)
         
         # 2. Pre-processing
