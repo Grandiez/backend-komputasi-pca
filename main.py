@@ -36,7 +36,7 @@ def proses_data(k: int = 3):
             return {"status": "error", "detail": "Koneksi Supabase belum di-set"}
 
         # 1. Tarik Data Mentah
-        response = supabase.table("kuesioner").select("*").execute()
+        response = supabase.table("kuisioner").select("*").execute()
         data = response.data
         
         if not data or len(data) < k:
