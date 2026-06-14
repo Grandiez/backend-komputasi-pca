@@ -32,7 +32,7 @@ def proses_data(k: int = 3):
             return {"status": "error", "detail": "Koneksi Supabase belum di-set"}
 
         # 1. Tarik Data Mentah
-        response = supabase.table("kuisioner").select("*").execute()
+        response = supabase.table("kuesioner").select("*").execute()
         data = response.data
         
         # Mencegah error jika data kosong
