@@ -25,10 +25,6 @@ try:
 except:
     supabase = None
 
-@app.get("/")
-def read_root():
-    return {"status": "Online", "message": "API Komputasi K-Means SMKN 1 Dawuan Aktif!"}
-
 @app.get("/proses-klaster")
 def proses_data(k: int = 3):
     try:
@@ -36,38 +32,60 @@ def proses_data(k: int = 3):
             return {"status": "error", "detail": "Koneksi Supabase belum di-set"}
 
         # 1. Tarik Data Mentah
-        # 1. Tarik Data Mentah
         response = supabase.table("kuisioner").select("*").execute()
         data = response.data
         
-        # Mencegah error NoneType jika data kosong atau diblokir RLS
-        if data is None:
-            data = []
+        # Mencegah error jika data kosong
+        if not data:
+            return {"status": "error", "detail": "Database Supabase benar-benar kosong atau akses diblokir."}
             
-        if len(data) < k:
-            return {"status": "error", "detail": f"Data kosong atau di-blokir RLS! Data terbaca: {len(data)} siswa. Butuh minimal {k} siswa."}    
-       
         df = pd.DataFrame(data)
         
-        # 2. Pre-processing
-        kolom_p = [f"P{i}" for i in range(1, 21) if f"P{i}" in df.columns]
-        df_numeric = df[kolom_p].dropna()
+        # ANTI-BADAI 1: Paksa semua nama kolom jadi HURUF BESAR (P1, P2, dst)
+        df.columns = df.columns.str.upper()
+        
+        # 2. Pre-processing & Pembersihan Data
+        kolom_p = [f"P{i}" for i in range(1, 21)]
+        
+        # Cek apakah kolom P beneran ada
+        kolom_hilang = [col for col in kolom_p if col not in df.columns]
+        if kolom_hilang:
+            return {"status": "error", "detail": f"Gagal menemukan kolom ini di Supabase: {kolom_hilang}"}
+
+        # ANTI-BADAI 2: Paksa isi kolom P1-P20 jadi angka matematika (jika ada huruf, jadikan NaN)
+        for col in kolom_p:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # ANTI-BADAI 3: Hapus baris yang punya nilai kosong (NaN), tapi simpan sisa barisnya
+        df_bersih = df.dropna(subset=kolom_p).copy()
+
+        # Cek apakah setelah dibersihkan datanya masih cukup buat K-Means
+        if len(df_bersih) < k:
+            return {"status": "error", "detail": f"Data hancur saat dibersihkan! Dari {len(df)} baris, cuma sisa {len(df_bersih)} yang angkanya valid. Butuh minimal {k} baris."}
+
+        # Mulai Eksekusi Machine Learning
+        df_numeric = df_bersih[kolom_p]
         
         scaler = StandardScaler()
         scaled_data = scaler.fit_transform(df_numeric)
         
-        # 3. PCA (Target > 72%)
+        # 3. PCA (Target Variansi > 72%)
         pca = PCA(n_components=0.72)
         pca_data = pca.fit_transform(scaled_data)
         
-        # 4. K-Means
+        # 4. K-Means Clustering
         kmeans = KMeans(n_clusters=k, random_state=42)
         clusters = kmeans.fit_predict(pca_data)
 
-        # 5. Ekstraksi Koordinat buat Grafik Plotly
+        # 5. Ekstraksi Koordinat buat Plotly di Frontend
         pc1 = pca_data[:, 0].tolist()
         pc2 = pca_data[:, 1].tolist() if pca.n_components_ > 1 else [0] * len(pca_data)
-        nama_list = df['Nama'].tolist() if 'Nama' in df.columns else [f"Siswa {i+1}" for i in range(len(df))]
+        
+        # Tarik nama siswa, kalau gak ada kasih nama "Siswa 1, 2, 3..."
+        if 'NAMA' in df_bersih.columns:
+            nama_list = df_bersih['NAMA'].tolist()
+        else:
+            nama_list = [f"Siswa {i+1}" for i in range(len(df_bersih))]
         
         return {
             "status": "success",
@@ -83,4 +101,5 @@ def proses_data(k: int = 3):
         }
 
     except Exception as e:
-        return {"status": "error", "detail": str(e)}
+        # Menangkap SEMUA jenis error Python biar gak bikin server Crash 500
+        return {"status": "error", "detail": f"Error Internal Python: {str(e)}"}
